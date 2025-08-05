@@ -1,52 +1,66 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import os
-import supabase
-from openai import OpenAI
 import traceback
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI
+from supabase import create_client, Client
+from pydantic import BaseModel
 
-# === Middleware bắt lỗi in ra log Vercel ===
+# Init Supabase
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_client: Client = create_client(supabase_url, supabase_key)
+
+# Init OpenAI
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# FastAPI app
 app = FastAPI()
 
+# Allow all origins (for testing)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Exception middleware
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
-    except Exception as e:
-        print("=== Exception caught ===")
-        print(traceback.format_exc())
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)},
-        )
+    except Exception:
+        traceback.print_exc()
+        return {"error": "Internal Server Error"}
 
-# === Model request body ===
-class Query(BaseModel):
+
+# Input schema
+class QueryRequest(BaseModel):
     query: str
 
-# === Khởi tạo kết nối Supabase ===
-supabase_client = supabase.create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
 
-# === Khởi tạo OpenAI client ===
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+@app.post("/semantic_search")
+async def semantic_search(req: QueryRequest):
+    query = req.query
 
-@app.post("/semantic-search")
-async def semantic_search(query: Query):
-    # Tạo embedding cho query
-    response = openai_client.embeddings.create(
-        model="text-embedding-3-large",
-        input=query.query
+    # Create embedding
+    embedding_response = openai_client.embeddings.create(
+        input=query,
+        model="text-embedding-ada-002"
     )
-    embedding = response.data[0].embedding
+    query_embedding = embedding_response.data[0].embedding[:1536]  # Ensure 1536 dimensions
 
-    # Tìm trong Supabase bằng pgvector
-    result = supabase_client.rpc(
+    # Query Supabase function
+    response = supabase_client.rpc(
         "match_documents",
-        {"query_embedding": embedding, "match_threshold": 0.7, "match_count": 5}
+        {
+            "query_embedding": query_embedding,
+            "match_count": 5,
+            "match_threshold": 0.78
+        }
     ).execute()
 
-    return {"results": result.data}
+    return response.data
