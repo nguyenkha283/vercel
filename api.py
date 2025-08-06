@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 # Init Supabase
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_key = os.getenv("SUPABASE_KEY")
 supabase_client: Client = create_client(supabase_url, supabase_key)
 
 # Init OpenAI
@@ -84,3 +84,4 @@ async def semantic_search(
     ).execute()
 
     return response.data
+
